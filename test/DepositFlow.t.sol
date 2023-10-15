@@ -20,10 +20,8 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
     ERC20 dai;
 
     event Deposited(address indexed depositor, uint256 indexed amount);
-    event DepositAsserted(bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId);
-    event DepositAssertionResolved(
-        bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId
-    );
+    event DepositAsserted(address indexed depositor, uint256 indexed amount, bytes32 indexed assertionId);
+    event DepositAssertionResolved(bytes32 indexed depositId, address indexed asserter, bytes32 indexed assertionId);
 
     function setUp() public {
         mainnetFork = vm.createFork(vm.envString("MAINNET_RPC"));
@@ -71,8 +69,9 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
 
         // Assert that the data is correct
         vm.selectFork(mainnetFork);
-        bytes32 dataId = bytes32("dataId-DepositOnScroll");
-        bytes32 data = bytes32("Deposited(address(this), 100)");
+        bytes32 depositId = bytes32("txn-hash-of-deposit-on-scroll");
+        address depositor = address(this);
+        uint256 amount = 100;
         address asserter = address(this);
         defaultCurrency.allocateTo(asserter, optimisticOracleV3.getMinimumBond(address(defaultCurrency))); // Give the asserter some money for the bond
 
@@ -86,8 +85,8 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         );
 
         vm.expectEmit(true, true, false, true);
-        emit DepositAsserted(dataId, data, asserter, bytes32(0));
-        return dataAsserterGoerli.assertDepositOnScroll(dataId, data, asserter);
+        emit DepositAsserted(depositor, amount, bytes32(0));
+        return dataAsserterGoerli.assertDepositOnScroll(depositId, depositor, amount, asserter);
     }
 
     function test_settleAssertion() public {
@@ -97,9 +96,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         vm.selectFork(mainnetFork);
         timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
         vm.expectEmit(true, true, true, true);
-        emit DepositAssertionResolved(
-            bytes32("dataId-DepositOnScroll"), bytes32("Deposited(address(this), 100)"), address(this), assertionId
-        );
+        emit DepositAssertionResolved(bytes32("txn-hash-of-deposit-on-scroll"), address(this), assertionId);
         optimisticOracleV3.settleAssertion(assertionId);
     }
 
