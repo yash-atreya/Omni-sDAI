@@ -20,8 +20,8 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
     ERC20 dai;
 
     event Deposited(address indexed depositor, uint256 indexed amount);
-    event DataAsserted(bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId);
-    event DataAssertionResolved(
+    event DepositAsserted(bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId);
+    event DepositAssertionResolved(
         bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId
     );
 
@@ -86,7 +86,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         );
 
         vm.expectEmit(true, true, false, true);
-        emit DataAsserted(dataId, data, asserter, bytes32(0));
+        emit DepositAsserted(dataId, data, asserter, bytes32(0));
         return dataAsserterGoerli.assertDepositOnScroll(dataId, data, asserter);
     }
 
@@ -97,7 +97,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         vm.selectFork(mainnetFork);
         timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
         vm.expectEmit(true, true, true, true);
-        emit DataAssertionResolved(
+        emit DepositAssertionResolved(
             bytes32("dataId-DepositOnScroll"), bytes32("Deposited(address(this), 100)"), address(this), assertionId
         );
         optimisticOracleV3.settleAssertion(assertionId);

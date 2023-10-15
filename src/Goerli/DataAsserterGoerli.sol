@@ -17,18 +17,18 @@ contract DataAsserterGoerli {
     uint64 public constant assertionLiveness = 30; // 30 seconds.
     bytes32 public immutable defaultIdentifier;
 
-    struct DataAssertion {
+    struct DepositAssertion {
         bytes32 dataId; // The dataId that was asserted.
         bytes32 data; // This could be an arbitrary data type.
         address asserter; // The address that made the assertion.
         bool resolved; // Whether the assertion has been resolved.
     }
 
-    mapping(bytes32 => DataAssertion) public assertionsData;
+    mapping(bytes32 => DepositAssertion) public assertionsData;
 
-    event DataAsserted(bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId);
+    event DepositAsserted(bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId);
 
-    event DataAssertionResolved(
+    event DepositAssertionResolved(
         bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId
     );
 
@@ -86,8 +86,8 @@ contract DataAsserterGoerli {
             defaultIdentifier,
             bytes32(0) // No domain.
         );
-        assertionsData[assertionId] = DataAssertion(dataId, data, asserter, false);
-        emit DataAsserted(dataId, data, asserter, assertionId);
+        assertionsData[assertionId] = DepositAssertion(dataId, data, asserter, false);
+        emit DepositAsserted(dataId, data, asserter, assertionId);
     }
 
     // OptimisticOracleV3 resolve callback.
@@ -96,8 +96,8 @@ contract DataAsserterGoerli {
         // If the assertion was true, then the data assertion is resolved.
         if (assertedTruthfully) {
             assertionsData[assertionId].resolved = true;
-            DataAssertion memory dataAssertion = assertionsData[assertionId];
-            emit DataAssertionResolved(dataAssertion.dataId, dataAssertion.data, dataAssertion.asserter, assertionId);
+            DepositAssertion memory dataAssertion = assertionsData[assertionId];
+            emit DepositAssertionResolved(dataAssertion.dataId, dataAssertion.data, dataAssertion.asserter, assertionId);
             // Else delete the data assertion if it was false to save gas.
         } else {
             delete assertionsData[assertionId];
