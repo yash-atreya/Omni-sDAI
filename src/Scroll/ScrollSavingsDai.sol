@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract ScrollSavingsDai {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable dai;
+    IERC20 public immutable dai; // Scroll Dai
     mapping(address => uint256) public deposits;
 
     event Deposited(address indexed depositor, uint256 indexed amount);

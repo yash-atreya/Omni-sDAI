@@ -10,7 +10,7 @@ import "./TokenPool.sol";
 // identifies a specific piece of information in the consuming contract and is replaceable. Similarly, any data
 // structure can be used to replace the asserted data.
 
-contract DataAsserterGoerli {
+contract DataAsserter {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable defaultCurrency;
