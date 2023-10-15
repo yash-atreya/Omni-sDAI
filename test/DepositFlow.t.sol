@@ -21,6 +21,9 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
 
     event Deposited(address indexed depositor, uint256 indexed amount);
     event DataAsserted(bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId);
+    event DataAssertionResolved(
+        bytes32 indexed dataId, bytes32 data, address indexed asserter, bytes32 indexed assertionId
+    );
 
     function setUp() public {
         mainnetFork = vm.createFork(vm.envString("MAINNET_RPC"));
@@ -56,7 +59,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
      * @dev Depositor needs to approve ScrollSavingsDai to spend DAI before depositing
      * @dev Asserter needs to approve DataAsserterGoerli to spend the bond before asserting
      */
-    function test_depositAndAssert() public {
+    function test_depositAndAssert() public returns (bytes32) {
         // @dev Approve ScrollSavingsDai to spend DAI
         vm.selectFork(scrollFork);
         dai.approve(address(scrollSavingsDai), 100);
@@ -84,6 +87,21 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
 
         vm.expectEmit(true, true, false, true);
         emit DataAsserted(dataId, data, asserter, bytes32(0));
-        dataAsserterGoerli.assertDepositOnScroll(dataId, data, asserter);
+        return dataAsserterGoerli.assertDepositOnScroll(dataId, data, asserter);
     }
+
+    function test_settleAssertion() public {
+        bytes32 assertionId = test_depositAndAssert();
+
+        // Settle the assertion
+        vm.selectFork(mainnetFork);
+        timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
+        vm.expectEmit(true, true, true, true);
+        emit DataAssertionResolved(
+            bytes32("dataId-DepositOnScroll"), bytes32("Deposited(address(this), 100)"), address(this), assertionId
+        );
+        optimisticOracleV3.settleAssertion(assertionId);
+    }
+
+    // TODO: Handle Disputes
 }
