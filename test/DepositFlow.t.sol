@@ -10,21 +10,26 @@ import "../src/SavingsDai.sol"; // Mainnet contract
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract DepositFlowTest is CommonOptimisticOracleV3Test {
-    DataAsserter public dataAsserter;
-    // bytes32 dataId = bytes32("dataId");
-    // bytes32 correctData = bytes32("correctData");
-    // bytes32 incorrectData = bytes32("incorrectData");
+    // Contract Instances
 
+    // Mainnet/Goerli
+    DataAsserter public dataAsserter;
+    ERC20 mainnetDai = ERC20(address(0x6B175474E89094C44Da98b954EedeAC495271d0F)); // DAI on Mainnet
+    SavingsDai savingsDai = SavingsDai(address(0x83F20F44975D03b1b09e64809B757c47f942BEeA)); // SavingsDai on Mainnet
+    TokenPool daiPool; // Dai liquidity pool - used to mint sDAI on mainnet.
+
+    // Scroll
+    ERC20 scrollDai; // Scroll doesn't have bridged DAI.
+    ScrollSavingsDai public scrollSavingsDai; // Scroll SavingsDai - Representation of SavingsDai from
+
+    // Forks
     uint256 mainnetFork;
     uint256 scrollFork;
 
-    ScrollSavingsDai public scrollSavingsDai;
-    ERC20 scrollDai;
-    ERC20 mainnetDai;
-    address liquidityProvider = address(0x1234325);
-    SavingsDai savingsDai = SavingsDai(address(0x83F20F44975D03b1b09e64809B757c47f942BEeA));
-    TokenPool daiPool;
+    // Dummy Accounts
+    address liquidityProvider = address(0x1234325); // Provides liquidity to TokenPool (daiPool)
 
+    // Events
     event Deposited(address indexed depositor, uint256 indexed amount);
     event DepositAsserted(address indexed depositor, uint256 indexed amount, bytes32 indexed assertionId);
     event DepositAssertionResolved(bytes32 indexed depositId, address indexed asserter, bytes32 indexed assertionId);
@@ -32,26 +37,31 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
     event LiquidityRemoved(address indexed provider, uint256 indexed amount);
 
     function setUp() public {
+        // Create Forks
         mainnetFork = vm.createFork(vm.envString("MAINNET_RPC"));
         scrollFork = vm.createFork(vm.envString("SCROLL_RPC"));
+
+        // Deploy Oracle and DataAsserter on Mainnet/Goerli
         vm.selectFork(mainnetFork);
         _commonSetup();
-        dataAsserter = new DataAsserter(address(defaultCurrency), address(optimisticOracleV3));
-        console.log("DataAsserter deployed at address: %s on fork_id %s", address(dataAsserter), vm.activeFork());
-        mainnetDai = new ERC20("DAI", "DAI");
-        daiPool = new TokenPool(address(mainnetDai), address(0x123), address(dataAsserter));
-        console.log("TokenPool deployed at address: %s on fork_id %s", address(daiPool), vm.activeFork());
-        deal(address(mainnetDai), liquidityProvider, 1000);
+        daiPool = new TokenPool(address(mainnetDai), address(savingsDai));
+        console.log("TokenPool deployed at address: ", address(daiPool), " on fork_id: ", vm.activeFork());
+        dataAsserter = new DataAsserter(address(defaultCurrency), address(optimisticOracleV3), address(daiPool));
+        console.log("DataAsserter deployed at address: ", address(dataAsserter), " on fork_id: ", vm.activeFork());
+        daiPool.setDataAsserter(address(dataAsserter)); // Set DataAsserter on TokenPool
 
+        // Deploy ScrollSavingsDai on Scroll
         vm.selectFork(scrollFork);
-        scrollDai = new ERC20("ScrollDAI", "sclDAI");
+        scrollDai = new ERC20("ScrollDAI", "sclDAI"); // Scroll doesn't have bridged DAI. Create our own.
         scrollSavingsDai = new ScrollSavingsDai(address(scrollDai));
         console.log(
-            "ScrollSavingsDai deployed at address: %s on fork_id %s", address(scrollSavingsDai), vm.activeFork()
+            "ScrollSavingsDai deployed at address: ", address(scrollSavingsDai), " on fork_id: ", vm.activeFork()
         );
 
         // Deal
         deal(address(scrollDai), address(this), 1000);
+        vm.selectFork(mainnetFork);
+        deal(address(mainnetDai), liquidityProvider, 1000);
     }
 
     function test_depositOnScroll() public {
@@ -96,18 +106,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
 
         vm.expectEmit(true, true, false, true);
         emit DepositAsserted(depositor, amount, bytes32(0));
-        return dataAsserter.assertDepositOnScroll(depositId, depositor, amount, asserter);
-    }
-
-    function test_settleAssertion() public {
-        bytes32 assertionId = test_depositAndAssert();
-
-        // Settle the assertion
-        vm.selectFork(mainnetFork);
-        timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
-        vm.expectEmit(true, true, true, true);
-        emit DepositAssertionResolved(bytes32("txn-hash-of-deposit-on-scroll"), address(this), assertionId);
-        optimisticOracleV3.settleAssertion(assertionId);
+        return dataAsserter.assertDeposit(depositId, depositor, amount, asserter);
     }
 
     // TOKEN POOL TESTS
@@ -144,7 +143,30 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
      * @notice Tests the depositDaiToVault function from TokenPool called by callback when assertion is resolved/settled.
      */
 
-    function test_depositInVaultAfterSettlement() public {}
+    function test_depositInVaultAfterSettlement() public {
+        // Call approveSavingsDai on TokenPool to approve SavingsDai to spend DAI
+        vm.selectFork(mainnetFork);
+        daiPool.approveSavingsDai(type(uint256).max); // Max approval
 
+        // Add liquidity
+        test_addLiquidity();
+        assertEq(daiPool.totalDaiBalance(), 100);
+
+        // Deposit, Assert and Settle on Scroll
+        uint256 previewShares = savingsDai.previewDeposit(100);
+        _settleAssertion();
+        assertEq(savingsDai.balanceOf(address(daiPool)), previewShares);
+    }
+
+    function _settleAssertion() internal {
+        bytes32 assertionId = test_depositAndAssert();
+
+        // Settle the assertion
+        vm.selectFork(mainnetFork);
+        timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
+        vm.expectEmit(true, true, true, true);
+        emit DepositAssertionResolved(bytes32("txn-hash-of-deposit-on-scroll"), address(this), assertionId);
+        optimisticOracleV3.settleAssertion(assertionId);
+    }
     // TODO: Handle Disputes
 }

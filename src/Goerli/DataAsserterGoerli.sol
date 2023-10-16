@@ -17,6 +17,7 @@ contract DataAsserter {
     OptimisticOracleV3Interface public immutable oo;
     uint64 public constant assertionLiveness = 30; // 30 seconds.
     bytes32 public immutable defaultIdentifier;
+    TokenPool public daiPool;
 
     struct DepositAssertion {
         bytes32 depositId; // The txn hash of the deposit.
@@ -32,10 +33,11 @@ contract DataAsserter {
 
     event DepositAssertionResolved(bytes32 indexed depositId, address indexed asserter, bytes32 indexed assertionId);
 
-    constructor(address _defaultCurrency, address _optimisticOracleV3) {
+    constructor(address _defaultCurrency, address _optimisticOracleV3, address _daiPool) {
         defaultCurrency = IERC20(_defaultCurrency);
         oo = OptimisticOracleV3Interface(_optimisticOracleV3);
         defaultIdentifier = oo.defaultIdentifier();
+        daiPool = TokenPool(_daiPool);
     }
 
     // For a given assertionId, returns a boolean indicating whether the data is accessible and the data itself.
@@ -48,7 +50,7 @@ contract DataAsserter {
     // Data can be asserted many times with the same combination of arguments, resulting in unique assertionIds. This is
     // because the block.timestamp is included in the claim. The consumer contract must store the returned assertionId
     // identifiers to able to get the information using getData.
-    function assertDepositOnScroll(bytes32 _depositId, address _depositor, uint256 _amount, address _asserter)
+    function assertDeposit(bytes32 _depositId, address _depositor, uint256 _amount, address _asserter)
         public
         returns (bytes32 assertionId)
     {
@@ -101,6 +103,8 @@ contract DataAsserter {
             DepositAssertion memory dataAssertion = assertionsData[assertionId];
             emit DepositAssertionResolved(dataAssertion.depositId, dataAssertion.asserter, assertionId);
             // Deposit `amount` Dai from Pool in sDAI Vault with the receiver as the depositor on scroll.
+            // msg.sender is the oracle contract. Need it to be the DataAsserter contract.
+            daiPool.depositDaiToVault(dataAssertion.amount, dataAssertion.depositor);
             // Else delete the data assertion if it was false to save gas.
         } else {
             delete assertionsData[assertionId];
