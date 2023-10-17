@@ -59,6 +59,8 @@ contract FillerPool {
         require(dai.balanceOf(_filler) >= _amount, "Filler has insufficient balance to fill deposit");
         TransferHelper.safeTransferFrom(_token, _filler, address(this), _amount);
         uint256 receivedShares;
+
+        // TODO: Add fee component
         // Check if Dai
         if (_token == address(dai)) {
             // Need _token to be approved by address(this)

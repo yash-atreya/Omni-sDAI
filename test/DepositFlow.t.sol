@@ -8,6 +8,7 @@ import "../src/Scroll/ScrollSavingsDai.sol";
 import "../src/Goerli/TokenPool.sol";
 import "../src/SavingsDai.sol"; // Mainnet contract
 import "../src/Goerli/FillerPool.sol";
+import {DataAsserter as DataAsserterScroll} from "../src/Scroll/DataAsserter.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract DepositFlowTest is CommonOptimisticOracleV3Test {
@@ -22,7 +23,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
     // Scroll
     ERC20 scrollDai; // Scroll doesn't have bridged DAI.
     ScrollSavingsDai public scrollSavingsDai; // Scroll SavingsDai - Representation of SavingsDai from
-
+    DataAsserterScroll public dataAsserterScroll; // DataAsserter on Scroll
     // Forks
     uint256 mainnetFork;
     uint256 scrollFork;
@@ -33,13 +34,14 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
     address depositor = address(0x1234327); // Depositor
     // Events
 
+    // Scroll-SavingsDai Events
     event Deposited(address indexed depositor, uint256 indexed amount);
-    event DepositAsserted(address indexed depositor, uint256 indexed amount, bytes32 indexed assertionId);
-    event DepositAssertionResolved(bytes32 indexed depositId, address indexed asserter, bytes32 indexed assertionId);
-    event LiquidityAdded(address indexed provider, uint256 indexed amount);
-    event LiquidityRemoved(address indexed provider, uint256 indexed amount);
     // FillerPool Events
     event DepositFilled(address indexed filler, address indexed fillFor, bytes32 indexed fillHash);
+
+    // Scroll-DataAsserter Events
+    event DepositFillAsserted(bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId);
+    event DepositFillAssertionResolved(bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId);
 
     function setUp() public {
         // Create Forks
@@ -60,11 +62,19 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         // Deploy ScrollSavingsDai on Scroll
         vm.selectFork(scrollFork);
         scrollDai = new ERC20("ScrollDAI", "sclDAI"); // Scroll doesn't have bridged DAI. Create our own.
+
+        // Deploy OOv3 and DataAsserter on Scroll
         scrollSavingsDai = new ScrollSavingsDai(address(scrollDai));
         console.log(
             "ScrollSavingsDai deployed at address: ", address(scrollSavingsDai), " on fork_id: ", vm.activeFork()
         );
-
+        _commonSetup();
+        dataAsserterScroll =
+            new DataAsserterScroll(address(defaultCurrency), address(optimisticOracleV3), address(scrollSavingsDai));
+        console.log(
+            "DataAsserterScroll deployed at address: ", address(dataAsserterScroll), " on fork_id: ", vm.activeFork()
+        );
+        scrollSavingsDai.setDataAsserter(address(dataAsserterScroll)); // Set DataAsserter on ScrollSavingsDai
         // Deal
         deal(address(scrollDai), depositor, 1000); // Gives 100 Dai to depositor on Scroll
         vm.selectFork(mainnetFork);
@@ -84,7 +94,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         vm.stopPrank();
     }
 
-    function test_fillDeposit() public {
+    function test_fillDeposit() public returns (bytes32, uint256) {
         test_depositOnScroll();
         vm.selectFork(mainnetFork);
         // Relay catches the `Deposited` event and fills deposit
@@ -100,114 +110,50 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         mainnetDai.approve(address(fillerPool), amount);
         vm.expectEmit(true, true, false, true);
         emit DepositFilled(filler, fillFor, bytes32(0));
-        (, uint256 receivedShares) = fillerPool.fillDeposit(depositHash, amount, fillFor, filler, token, fee);
+        (bytes32 fillHash, uint256 receivedShares) =
+            fillerPool.fillDeposit(depositHash, amount, fillFor, filler, token, fee);
         assertEq(receivedShares, previewedShares);
         assertEq(savingsDai.balanceOf(address(fillerPool)), previewedShares);
         assertEq(mainnetDai.balanceOf(relayer), 900);
+        return (fillHash, receivedShares);
     }
 
     /**
      * @notice In this test, relayer fills the deposit and asserts the fill to Scroll's DataAsserter.
      */
-    function test_fillDepositAndAssertFill() public {
-        test_fillDeposit();
+    function test_fillDepositAndAssertFill() public returns (bytes32, bytes32) {
+        (bytes32 fillHash, uint256 receivedShares) = test_fillDeposit();
         // Relayer asserts the filled deposit on Scroll
         vm.selectFork(scrollFork);
-        vm.startPrank(relayer);
+        address asserter = relayer;
+        address filler = relayer;
+        address fillFor = depositor;
+        bytes32 fillTxn = bytes32("txn-hash-of-fill-on-mainnet");
+
+        defaultCurrency.allocateTo(relayer, optimisticOracleV3.getMinimumBond(address(defaultCurrency))); // Give the asserter some money for the bond
+        vm.startPrank(asserter);
+        defaultCurrency.approve(
+            address(dataAsserterScroll), optimisticOracleV3.getMinimumBond(address(defaultCurrency))
+        ); // Asserter needs to approve DataAsserter to spend the bond
+        vm.expectEmit(true, true, false, true);
+        emit DepositFillAsserted(fillHash, asserter, bytes32(0));
+        bytes32 assertionId =
+            dataAsserterScroll.assertDepositFill(asserter, filler, fillHash, fillTxn, fillFor, receivedShares);
+        vm.stopPrank();
+        return (fillHash, assertionId);
     }
-    /**
-     * @notice Test the deposit and assert flow
-     * @dev Depositor needs to approve ScrollSavingsDai to spend DAI before depositing
-     * @dev Asserter needs to approve DataAsserterGoerli to spend the bond before asserting
-     */
-    // function test_depositAndAssert() public returns (bytes32) {
-    //     // @dev Approve ScrollSavingsDai to spend DAI
-    //     vm.selectFork(scrollFork);
-    //     scrollDai.approve(address(scrollSavingsDai), 100);
 
-    //     // Deposit 100 Dai
-    //     vm.expectEmit(true, true, false, true);
-    //     emit Deposited(address(this), 100);
-    //     scrollSavingsDai.deposit(100);
-
-    //     // Assert that the data is correct
-    //     vm.selectFork(mainnetFork);
-    //     bytes32 depositId = bytes32("txn-hash-of-deposit-on-scroll");
-    //     address depositor = address(this);
-    //     uint256 amount = 100;
-    //     address asserter = address(this);
-    //     defaultCurrency.allocateTo(asserter, optimisticOracleV3.getMinimumBond(address(defaultCurrency))); // Give the asserter some money for the bond
-
-    //     // @dev: Asserter needs to approve DataAsserterGoerli to spend the bond
-    //     defaultCurrency.approve(address(dataAsserter), optimisticOracleV3.getMinimumBond(address(defaultCurrency)));
-    //     assertEq(
-    //         defaultCurrency.allowance(asserter, address(dataAsserter)),
-    //         optimisticOracleV3.getMinimumBond(address(defaultCurrency))
-    //     );
-
-    //     vm.expectEmit(true, true, false, true);
-    //     emit DepositAsserted(depositor, amount, bytes32(0));
-    //     return dataAsserter.assertDeposit(depositId, depositor, amount, asserter);
-    // }
-
-    // TOKEN POOL TESTS
-    // function test_addLiquidity() public {
-    //     // Approve TokenPool to spend DAI
-    //     vm.selectFork(mainnetFork);
-    //     vm.startPrank(liquidityProvider);
-    //     mainnetDai.approve(address(daiPool), 100);
-    //     assertEq(mainnetDai.allowance(liquidityProvider, address(daiPool)), 100);
-
-    //     // Add liquidity
-    //     vm.expectEmit(true, true, false, true);
-    //     emit LiquidityAdded(liquidityProvider, 100);
-    //     daiPool.addLiquidity(100);
-    //     vm.stopPrank();
-    //     assertEq(daiPool.totalDaiBalance(), 100);
-    //     assertEq(daiPool.daiBalances(liquidityProvider), 100);
-    // }
-
-    // function test_removeLiquidity() public {
-    //     test_addLiquidity();
-    //     assertEq(mainnetDai.balanceOf(liquidityProvider), 900);
-
-    //     // Remove liquidity
-    //     vm.expectEmit(true, true, false, true);
-    //     emit LiquidityRemoved(liquidityProvider, 100); // liquidityProvider is address(this)
-    //     vm.prank(liquidityProvider);
-    //     daiPool.removeLiquidity(100);
-    //     assertEq(daiPool.totalDaiBalance(), 0);
-    //     assertEq(daiPool.daiBalances(liquidityProvider), 0);
-    //     assertEq(mainnetDai.balanceOf(liquidityProvider), 1000);
-    // }
-    /**
-     * @notice Tests the depositDaiToVault function from TokenPool called by callback when assertion is resolved/settled.
-     */
-
-    // function test_depositInVaultAfterSettlement() public {
-    //     // Call approveSavingsDai on TokenPool to approve SavingsDai to spend DAI
-    //     vm.selectFork(mainnetFork);
-    //     daiPool.approveSavingsDai(type(uint256).max); // Max approval
-
-    //     // Add liquidity
-    //     test_addLiquidity();
-    //     assertEq(daiPool.totalDaiBalance(), 100);
-
-    //     // Deposit, Assert and Settle on Scroll
-    //     uint256 previewShares = savingsDai.previewDeposit(100);
-    //     _settleAssertion();
-    //     assertEq(savingsDai.balanceOf(address(daiPool)), previewShares);
-    // }
-
-    // function _settleAssertion() internal {
-    //     bytes32 assertionId = test_depositAndAssert();
-
-    //     // Settle the assertion
-    //     vm.selectFork(mainnetFork);
-    //     timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
-    //     vm.expectEmit(true, true, true, true);
-    //     emit DepositAssertionResolved(bytes32("txn-hash-of-deposit-on-scroll"), address(this), assertionId);
-    //     optimisticOracleV3.settleAssertion(assertionId);
-    // }
-    // TODO: Handle Disputes
+    function test_depositAssertionResolution() public {
+        (bytes32 fillHash, bytes32 assertionId) = test_fillDepositAndAssertFill();
+        // Settle the assertion
+        timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
+        vm.expectEmit(true, true, true, true);
+        address asserter = relayer;
+        emit DepositFillAssertionResolved(fillHash, asserter, assertionId);
+        optimisticOracleV3.settleAssertion(assertionId);
+        uint256 totalSupply = scrollSavingsDai.totalSupply();
+        assertTrue(scrollSavingsDai.balanceOf(depositor) > 0);
+        assertEq(scrollSavingsDai.balanceOf(depositor), totalSupply);
+        console.log("sDai balance of depositor: ", scrollSavingsDai.balanceOf(depositor));
+    }
 }
