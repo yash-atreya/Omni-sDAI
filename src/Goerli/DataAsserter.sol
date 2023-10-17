@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import "@uma/core/contracts/optimistic-oracle-v3/implementation/ClaimData.sol";
@@ -13,10 +13,10 @@ import "./TokenPool.sol";
 contract DataAsserter {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable defaultCurrency;
+    IERC20 public immutable defaultCurrency; // Oracle's default currency for posting bonds.
     OptimisticOracleV3Interface public immutable oo;
     uint64 public constant assertionLiveness = 30; // 30 seconds.
-    bytes32 public immutable defaultIdentifier;
+    bytes32 public immutable defaultIdentifier; // The identifier used by the OptimisticOracleV3. - "ASSERT_TRUTH"
     TokenPool public daiPool;
 
     struct DepositAssertion {
@@ -50,11 +50,11 @@ contract DataAsserter {
     // Data can be asserted many times with the same combination of arguments, resulting in unique assertionIds. This is
     // because the block.timestamp is included in the claim. The consumer contract must store the returned assertionId
     // identifiers to able to get the information using getData.
-    function assertDeposit(bytes32 _depositId, address _depositor, uint256 _amount, address _asserter)
+    function assertDepositAndFill(bytes32 _depositId, address _depositor, uint256 _amount, address _asserter)
         public
         returns (bytes32 assertionId)
     {
-        _asserter = _asserter == address(0) ? msg.sender : _asserter;
+        _asserter = _asserter == address(0) ? msg.sender : _asserter; // _asserter is the relayer.
         uint256 bond = oo.getMinimumBond(address(defaultCurrency));
         defaultCurrency.safeTransferFrom(msg.sender, address(this), bond);
         defaultCurrency.safeApprove(address(oo), bond);
@@ -92,6 +92,9 @@ contract DataAsserter {
         );
         assertionsData[assertionId] = DepositAssertion(_depositId, _depositor, _amount, _asserter, false);
         emit DepositAsserted(_depositor, _amount, assertionId);
+
+        // Fill the deposit `_amount` wDai by using Dai to mint sDAI and forwarding it to the user.
+        // Assert the filled deposit request on Scroll's OOv3, which mints wsDai to the user.
     }
 
     // OptimisticOracleV3 resolve callback.
@@ -103,7 +106,6 @@ contract DataAsserter {
             DepositAssertion memory dataAssertion = assertionsData[assertionId];
             emit DepositAssertionResolved(dataAssertion.depositId, dataAssertion.asserter, assertionId);
             // Deposit `amount` Dai from Pool in sDAI Vault with the receiver as the depositor on scroll.
-            // msg.sender is the oracle contract. Need it to be the DataAsserter contract.
             daiPool.depositDaiToVault(dataAssertion.amount, dataAssertion.depositor);
             // Else delete the data assertion if it was false to save gas.
         } else {
@@ -113,5 +115,5 @@ contract DataAsserter {
 
     // If assertion is disputed, do nothing and wait for resolution.
     // This OptimisticOracleV3 callback function needs to be defined so the OOv3 doesn't revert when it tries to call it.
-    function assertionDisputedCallback(bytes32 assertionId) public {}
+    // function assertionDisputedCallback(bytes32 assertionId) public {}
 }
