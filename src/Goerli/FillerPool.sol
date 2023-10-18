@@ -4,12 +4,14 @@ pragma solidity ^0.8.16;
 import "v3-periphery/libraries/TransferHelper.sol";
 import "@uma/core/contracts/optimistic-oracle-v3/implementation/ClaimData.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 interface ISavingsDai {
     function deposit(uint256 assets, address receiver) external returns (uint256 shares);
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
 }
 
-contract FillerPool {
+contract FillerPool is Ownable {
     ISavingsDai public immutable savingsDai;
     IERC20 public immutable dai = IERC20(address(0x6B175474E89094C44Da98b954EedeAC495271d0F)); // DAI on Mainnet
 
@@ -92,5 +94,9 @@ contract FillerPool {
         depositFills[fillHash] = Fill(_depositHash, _amount, _fillFor, _filler, _token, _fee, block.timestamp, true);
         emit DepositFilled(_filler, _fillFor, fillHash);
         return (fillHash, receivedShares);
+    }
+
+    function approve(address _token, address _spender, uint256 _amount) external onlyOwner {
+        TransferHelper.safeApprove(_token, _spender, _amount);
     }
 }

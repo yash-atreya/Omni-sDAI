@@ -5,8 +5,9 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-
+import "forge-std/console.sol";
 // TODO: Implement the IScrollStandardERC20 interface
+
 contract ScrollSavingsDai is ERC20, Ownable {
     using SafeERC20 for IERC20;
 
@@ -15,6 +16,7 @@ contract ScrollSavingsDai is ERC20, Ownable {
     mapping(address => uint256) public deposits;
 
     event Deposited(address indexed depositor, uint256 indexed amount);
+    event WithdrawalRequest(address indexed withdrawer, uint256 indexed amount);
 
     constructor(address _dai) ERC20("Wrapped Savings Dai", "wsDAI") {
         dai = IERC20(_dai);
@@ -30,11 +32,25 @@ contract ScrollSavingsDai is ERC20, Ownable {
         emit Deposited(msg.sender, _amount);
     }
 
+    /**
+     * @notice Withdraws wsDai from the contract
+     * @dev address(this) to be approved to spend wsDai by msg.sender
+     * @param _amount Amount of wsDai to withdraw
+     */
+    function withdraw(uint256 _amount) external {
+        // require(deposits[msg.sender] >= _amount, "Insufficient balance");
+        // Transfer wsDai shares to this contract
+        IERC20(address(this)).safeTransferFrom(msg.sender, address(this), _amount);
+        // deposits[msg.sender] -= _amount;
+        emit WithdrawalRequest(msg.sender, _amount);
+    }
+
+    // ERC20 functions
+
     modifier onlyDataAsserter() {
         require(msg.sender == dataAsserter, "Caller is not data asserter");
         _;
     }
-    // ERC20 functions
 
     function mint(address _receiver, uint256 shares) external onlyDataAsserter {
         _mint(_receiver, shares);

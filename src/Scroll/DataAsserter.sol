@@ -14,14 +14,6 @@ contract DataAsserter {
     bytes32 public immutable defaultIdentifier;
     address public immutable scrollSavingsDai;
 
-    struct DepositToVaultAssertion {
-        bytes32 depositId; // The txn hash of the deposit.
-        address depositor;
-        uint256 amount;
-        address asserter; // The address that made the assertion.
-        bool resolved; // Whether the assertion has been resolved.
-    }
-
     struct DepositFillAssertion {
         bytes32 fillHash; // The hash returned by the FillerPool.
         address filler; // Relayer that filled the request.
@@ -39,19 +31,16 @@ contract DataAsserter {
     event DepositFillAsserted(bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId);
     event DepositFillAssertionResolved(bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId);
 
-    mapping(bytes32 => DepositToVaultAssertion) public assertionsData;
-
-    event DepositToVaultAsserted(address indexed depositor, uint256 indexed amount, bytes32 indexed assertionId);
-
-    event DepositToVaultAssertionResolved(
-        bytes32 indexed depositId, address indexed asserter, bytes32 indexed assertionId
-    );
-
     constructor(address _defaultCurrency, address _optimisticOracleV3, address _scrollSavingsDai) {
         defaultCurrency = IERC20(_defaultCurrency);
         oo = OptimisticOracleV3Interface(_optimisticOracleV3);
         defaultIdentifier = oo.defaultIdentifier();
         scrollSavingsDai = _scrollSavingsDai;
+    }
+
+    function getData(bytes32 assertionId) public view returns (DepositFillAssertion memory) {
+        require(fillAssertionsData[assertionId].resolved, "Assertion not resolved yet.");
+        return fillAssertionsData[assertionId];
     }
 
     function assertDepositFill(
@@ -104,7 +93,7 @@ contract DataAsserter {
         require(msg.sender == address(oo));
         // If the assertion was true, then the data assertion is resolved.
         if (assertedTruthfully) {
-            assertionsData[assertionId].resolved = true;
+            fillAssertionsData[assertionId].resolved = true;
             DepositFillAssertion memory fillDataAssertion = fillAssertionsData[assertionId];
             emit DepositFillAssertionResolved(fillDataAssertion.fillHash, fillDataAssertion.filler, assertionId);
             // Mint `amount` of wrapped sDAI to the depositor on scroll.
@@ -116,7 +105,7 @@ contract DataAsserter {
             require(success, "Failed to mint Wrapped sDai shares to depositor on Scroll.");
             reimbursements[fillDataAssertion.filler][fillDataAssertion.fillToken] += fillDataAssertion.amount;
         } else {
-            delete assertionsData[assertionId];
+            delete fillAssertionsData[assertionId];
             // TODO: Refund deposited wDai back to user if assertion was false.
         }
     }

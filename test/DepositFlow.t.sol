@@ -5,7 +5,6 @@ import "forge-std/console.sol";
 import "./common/CommonOptimisticOracleV3Test.sol";
 import "../src/Goerli/DataAsserter.sol";
 import "../src/Scroll/ScrollSavingsDai.sol";
-import "../src/Goerli/TokenPool.sol";
 import "../src/SavingsDai.sol"; // Mainnet contract
 import "../src/Goerli/FillerPool.sol";
 import {DataAsserter as DataAsserterScroll} from "../src/Scroll/DataAsserter.sol";
@@ -18,10 +17,9 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
     DataAsserter public dataAsserter;
     ERC20 mainnetDai = ERC20(address(0x6B175474E89094C44Da98b954EedeAC495271d0F)); // DAI on Mainnet
     SavingsDai savingsDai = SavingsDai(address(0x83F20F44975D03b1b09e64809B757c47f942BEeA)); // SavingsDai on Mainnet
-    TokenPool daiPool; // Dai liquidity pool - used to mint sDAI on mainnet.
     FillerPool fillerPool; // FillerPool on Mainnet
     // Scroll
-    ERC20 scrollDai; // Scroll doesn't have bridged DAI.
+    ERC20 scrollDai; // Scroll Sepolia doesn't have bridged DAI. Scroll Mainnet has it. https://github.com/scroll-tech/token-list
     ScrollSavingsDai public scrollSavingsDai; // Scroll SavingsDai - Representation of SavingsDai from
     DataAsserterScroll public dataAsserterScroll; // DataAsserter on Scroll
     // Forks
@@ -29,7 +27,6 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
     uint256 scrollFork;
 
     // Dummy Accounts
-    address liquidityProvider = address(0x1234325); // Provides liquidity to TokenPool (daiPool)
     address relayer = address(0x1234326); // Relayer
     address depositor = address(0x1234327); // Depositor
     // Events
@@ -50,15 +47,13 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
 
         // Deploy Oracle and DataAsserter on Mainnet/Goerli
         vm.selectFork(mainnetFork);
-        _commonSetup();
-        daiPool = new TokenPool(address(mainnetDai), address(savingsDai));
-        console.log("TokenPool deployed at address: ", address(daiPool), " on fork_id: ", vm.activeFork());
-        dataAsserter = new DataAsserter(address(defaultCurrency), address(optimisticOracleV3), address(daiPool));
-        console.log("DataAsserter deployed at address: ", address(dataAsserter), " on fork_id: ", vm.activeFork());
-        daiPool.setDataAsserter(address(dataAsserter)); // Set DataAsserter on TokenPool
-
         // Deploy FillerPool on Mainnet
         fillerPool = new FillerPool(address(savingsDai));
+        _commonSetup();
+        dataAsserter =
+        new DataAsserter(address(defaultCurrency), address(optimisticOracleV3), address(savingsDai), address(fillerPool));
+        console.log("DataAsserter deployed at address: ", address(dataAsserter), " on fork_id: ", vm.activeFork());
+
         // Deploy ScrollSavingsDai on Scroll
         vm.selectFork(scrollFork);
         scrollDai = new ERC20("ScrollDAI", "sclDAI"); // Scroll doesn't have bridged DAI. Create our own.
@@ -78,7 +73,6 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         // Deal
         deal(address(scrollDai), depositor, 1000); // Gives 100 Dai to depositor on Scroll
         vm.selectFork(mainnetFork);
-        deal(address(mainnetDai), liquidityProvider, 1000);
         deal(address(mainnetDai), relayer, 1000);
     }
 
@@ -128,7 +122,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         address asserter = relayer;
         address filler = relayer;
         address fillFor = depositor;
-        address fillToken = address(scrollDai);
+        address fillToken = address(scrollDai); // Corresponding Represention of fillToken on Scroll.
         uint256 amount = 100;
         defaultCurrency.allocateTo(relayer, optimisticOracleV3.getMinimumBond(address(defaultCurrency))); // Give the asserter some money for the bond
         vm.startPrank(asserter);
