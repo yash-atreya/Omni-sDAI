@@ -42,4 +42,20 @@ contract ScrollSavingsDai is ERC20, Ownable {
     function burn(address _receiver, uint256 shares) external onlyDataAsserter {
         _burn(_receiver, shares);
     }
+
+    // WithdrawToL1 function
+
+    function withdrawToL1(address _relayer, address _l2token, address _to) public {
+        require(_l2token == address(dai), "Only DAI is supported");
+        _to = _to == address(0) ? _relayer : _to;
+        // Check reimbursement amount
+        (bool success, bytes memory data) =
+            dataAsserter.call(abi.encodeWithSignature("getReimbursementAmount(address,address)", _relayer, _l2token));
+
+        require(success, "Failed to get reimbursement amount");
+        uint256 amount = abi.decode(data, (uint256));
+        require(amount > 0, "No reimbursement available");
+        // Transfer reimbursement amount to _to
+        IERC20(_l2token).safeTransfer(_to, amount);
+    }
 }

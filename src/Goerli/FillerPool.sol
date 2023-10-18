@@ -48,7 +48,7 @@ contract FillerPool {
         uint256 _amount,
         address _fillFor,
         address _filler,
-        address _token,
+        address _token, // L1 Token Address
         uint256 _fee
     ) public returns (bytes32, uint256) {
         // If token is Dai
@@ -82,8 +82,8 @@ contract FillerPool {
                 " at timestamp: ",
                 ClaimData.toUtf8BytesUint(block.timestamp),
                 " using token: 0x",
-                ClaimData.toUtf8BytesAddress(_token),
-                " and received ",
+                ClaimData.toUtf8BytesAddress(_token), // _token: L1 Token Address
+                " receiving ",
                 ClaimData.toUtf8BytesUint(receivedShares),
                 " shares in the FillerPool contract at 0x",
                 ClaimData.toUtf8BytesAddress(address(this))

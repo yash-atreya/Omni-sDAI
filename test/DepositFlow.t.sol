@@ -128,8 +128,8 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         address asserter = relayer;
         address filler = relayer;
         address fillFor = depositor;
-        bytes32 fillTxn = bytes32("txn-hash-of-fill-on-mainnet");
-
+        address fillToken = address(scrollDai);
+        uint256 amount = 100;
         defaultCurrency.allocateTo(relayer, optimisticOracleV3.getMinimumBond(address(defaultCurrency))); // Give the asserter some money for the bond
         vm.startPrank(asserter);
         defaultCurrency.approve(
@@ -138,7 +138,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         vm.expectEmit(true, true, false, true);
         emit DepositFillAsserted(fillHash, asserter, bytes32(0));
         bytes32 assertionId =
-            dataAsserterScroll.assertDepositFill(asserter, filler, fillHash, fillTxn, fillFor, receivedShares);
+            dataAsserterScroll.assertDepositFill(filler, fillHash, fillToken, amount, fillFor, receivedShares);
         vm.stopPrank();
         return (fillHash, assertionId);
     }
@@ -154,6 +154,7 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         uint256 totalSupply = scrollSavingsDai.totalSupply();
         assertTrue(scrollSavingsDai.balanceOf(depositor) > 0);
         assertEq(scrollSavingsDai.balanceOf(depositor), totalSupply);
+        assertEq(dataAsserterScroll.getReimbursementAmount(relayer, address(scrollDai)), 100);
         console.log("sDai balance of depositor: ", scrollSavingsDai.balanceOf(depositor));
     }
 }

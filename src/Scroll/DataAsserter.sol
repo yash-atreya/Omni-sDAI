@@ -24,8 +24,9 @@ contract DataAsserter {
 
     struct DepositFillAssertion {
         bytes32 fillHash; // The hash returned by the FillerPool.
-        bytes32 fillTxn; // Txn hash of the fill.
         address filler; // Relayer that filled the request.
+        address fillToken; // The L2 address of the token that was used to fill the request. eg. If Dai was used, then this is the address of L2 Dai.
+        uint256 amount; // The amount of the token that was used to fill the request.
         address fillFor; // The address for whom the request was filled.
         uint256 receivedShares; // The amount of sDai shares received when request was filled.
         bool resolved; // Whether the assertion has been resolved.
@@ -33,6 +34,7 @@ contract DataAsserter {
     }
 
     mapping(bytes32 => DepositFillAssertion) public fillAssertionsData;
+    mapping(address => mapping(address => uint256)) public reimbursements; // Relayer -> L2Token -> Amount
 
     event DepositFillAsserted(bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId);
     event DepositFillAssertionResolved(bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId);
@@ -53,14 +55,14 @@ contract DataAsserter {
     }
 
     function assertDepositFill(
-        address _asserter,
         address _filler,
         bytes32 _fillHash,
-        bytes32 _fillTxn,
+        address _fillToken,
+        uint256 _amount,
         address _fillFor,
         uint256 _receivedShares
     ) public returns (bytes32 assertionId) {
-        _asserter = _asserter == address(0) ? msg.sender : _asserter;
+        address _asserter = msg.sender;
         uint256 bond = oo.getMinimumBond(address(defaultCurrency));
         defaultCurrency.safeTransferFrom(msg.sender, address(this), bond);
         defaultCurrency.safeApprove(address(oo), bond);
@@ -69,19 +71,17 @@ contract DataAsserter {
             abi.encodePacked(
                 "0x",
                 ClaimData.toUtf8BytesAddress(_asserter),
-                " asserting that relayer 0x",
-                ClaimData.toUtf8BytesAddress(_filler),
-                " filled deposit request associated with fillHash: 0x",
-                ClaimData.toUtf8Bytes(_fillHash),
-                " for depositor 0x",
-                ClaimData.toUtf8BytesAddress(_fillFor),
-                " and received ",
-                ClaimData.toUtf8BytesUint(_receivedShares),
-                " shares in txn: ",
-                ClaimData.toUtf8Bytes(_fillTxn),
-                " in the DataAsserter contract at 0x",
+                " asserting in the DataAsserter contract at 0x",
                 ClaimData.toUtf8BytesAddress(address(this)),
-                " is valid."
+                " that the deposit request with fillHash: 0x",
+                ClaimData.toUtf8Bytes(_fillHash),
+                " initiated by depositor 0x",
+                ClaimData.toUtf8BytesAddress(_fillFor),
+                " has been filled by relayer 0x",
+                ClaimData.toUtf8BytesAddress(_filler),
+                " receiving ",
+                ClaimData.toUtf8BytesUint(_receivedShares),
+                " shares of sDai is valid."
             ),
             _asserter,
             address(this),
@@ -94,7 +94,7 @@ contract DataAsserter {
         );
 
         fillAssertionsData[assertionId] =
-            DepositFillAssertion(_fillHash, _fillTxn, _filler, _fillFor, _receivedShares, false, _asserter);
+            DepositFillAssertion(_fillHash, _filler, _fillToken, _amount, _fillFor, _receivedShares, false, _asserter);
         emit DepositFillAsserted(_fillHash, _asserter, assertionId);
         return assertionId;
     }
@@ -114,11 +114,25 @@ contract DataAsserter {
                 )
             );
             require(success, "Failed to mint Wrapped sDai shares to depositor on Scroll.");
+            reimbursements[fillDataAssertion.filler][fillDataAssertion.fillToken] += fillDataAssertion.amount;
         } else {
             delete assertionsData[assertionId];
             // TODO: Refund deposited wDai back to user if assertion was false.
         }
     }
+
+    function getReimbursementAmount(address _relayer, address _l2token) public view returns (uint256) {
+        return reimbursements[_relayer][_l2token];
+    }
+    // function withdrawToL1(address _l2token) public {
+    //     uint256 amount = reimbursements[msg.sender][_l2token];
+    //     require(amount > 0, "No reimbursements available.");
+    //     reimbursements[msg.sender][_l2token] = 0;
+    //     // Withdraw `amount` through native bridge to L1.
+    //     (bool success,) = scrollSavingsDai.call(
+    //         abi.encodeWithSignature("withdraw(address,uint256)", _l2token, amount)
+    //     );
+    // }
 
     // TODO: Disputed Callback
     // This OptimisticOracleV3 callback function needs to be defined so the OOv3 doesn't revert when it tries to call it.
