@@ -157,4 +157,15 @@ contract DepositFlowTest is CommonOptimisticOracleV3Test {
         assertEq(dataAsserterScroll.getReimbursementAmount(relayer, address(scrollDai)), 100);
         console.log("sDai balance of depositor: ", scrollSavingsDai.balanceOf(depositor));
     }
+
+    function test_withdrawRelayerReimbursement() public {
+        test_depositAssertionResolution();
+        // Withdraw reimbursement
+        vm.selectFork(scrollFork);
+        vm.startPrank(relayer);
+        scrollSavingsDai.withdrawRelayerReimbursement(relayer, address(scrollDai), address(0));
+        vm.stopPrank();
+        assertEq(scrollDai.balanceOf(relayer), 100);
+        assertEq(scrollDai.balanceOf(address(scrollSavingsDai)), 0);
+    }
 }
