@@ -35,11 +35,27 @@ contract DataAsserter {
         bool resolved; // Whether the assertion has been resolved.
     }
 
+    struct FilledWithdrawalAssertion {
+        bytes32 fillHash; // The txn hash of the fill.
+        address relayer;
+        uint256 amount; // Amount of tokens used to fill.
+        address token; // The token used fill and should be reimbursed in.
+        address asserter; // The address that made the assertion.
+        bool resolved; // Whether the assertion has been resolved.
+    }
+
     mapping(bytes32 => WithdrawalAssertion) public withdrawalAssertionsData;
+    mapping(bytes32 => FilledWithdrawalAssertion) public filledWithdrawalAssertionsData;
+    mapping(address => mapping(address => uint256)) public reimbursements; // Relayer -> L1Token -> Amount
 
     event WithdrawalAsserted(address indexed withdrawer, uint256 indexed amount, bytes32 indexed assertionId);
     event WithdrawalAssertionResolved(
         bytes32 indexed withdrawalId, address indexed asserter, bytes32 indexed assertionId
+    );
+
+    event FilledWithdrawalAsserted(address indexed relayer, uint256 indexed amount, bytes32 indexed assertionId);
+    event FilledWithdrawalAssertionResolved(
+        bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId
     );
 
     constructor(address _defaultCurrency, address _optimisticOracleV3, address _savingsDai, address _fillerPool) {
@@ -94,86 +110,127 @@ contract DataAsserter {
 
         emit WithdrawalAsserted(_withdrawer, _amount, assertionId);
     }
-    // Asserts data for a specific dataId on behalf of an asserter address.
-    // Data can be asserted many times with the same combination of arguments, resulting in unique assertionIds. This is
-    // because the block.timestamp is included in the claim. The consumer contract must store the returned assertionId
-    // identifiers to able to get the information using getData.
 
-    // function assertDepositAndFill(bytes32 _depositId, address _depositor, uint256 _amount, address _asserter)
-    //     public
-    //     returns (bytes32 assertionId)
-    // {
-    //     _asserter = _asserter == address(0) ? msg.sender : _asserter; // _asserter is the relayer.
-    //     uint256 bond = oo.getMinimumBond(address(defaultCurrency));
-    //     defaultCurrency.safeTransferFrom(msg.sender, address(this), bond);
-    //     defaultCurrency.safeApprove(address(oo), bond);
+    // Assert Filled Withdrawal
+    /**
+     * @notice Asserts that a withdrawal has been filled for getting reimbursent.
+     */
+    function assertFilledWithdrawal(
+        bytes32 _fillHash,
+        address _relayer,
+        uint256 _amount,
+        address _token,
+        address _asserter
+    ) public returns (bytes32 assertionId) {
+        _asserter = _asserter == address(0) ? msg.sender : _relayer; // _asserter is the relayer.
+        uint256 bond = oo.getMinimumBond(address(defaultCurrency));
+        defaultCurrency.safeTransferFrom(msg.sender, address(this), bond);
+        defaultCurrency.safeApprove(address(oo), bond);
 
-    //     // The claim we want to assert is the first argument of assertTruth. It must contain all of the relevant
-    //     // details so that anyone may verify the claim without having to read any further information on chain. As a
-    //     // result, the claim must include both the data id and data, as well as a set of instructions that allow anyone
-    //     // to verify the information in publicly available sources.
-    //     // See the UMIP corresponding to the defaultIdentifier used in the OptimisticOracleV3 "ASSERT_TRUTH" for more
-    //     // information on how to construct the claim.
-    //     assertionId = oo.assertTruth(
-    //         abi.encodePacked(
-    //             "0x",
-    //             ClaimData.toUtf8BytesAddress(_asserter),
-    //             " asserting deposit on scroll: 0x", // in the example data is type bytes32 so we add the hex prefix 0x.
-    //             ClaimData.toUtf8Bytes(_depositId),
-    //             " for depositor: 0x",
-    //             ClaimData.toUtf8BytesAddress(_depositor),
-    //             " with amount: ",
-    //             ClaimData.toUtf8BytesUint(_amount),
-    //             " at timestamp: ",
-    //             ClaimData.toUtf8BytesUint(block.timestamp),
-    //             " in the DataAsserter contract at 0x",
-    //             ClaimData.toUtf8BytesAddress(address(this)),
-    //             " is valid."
-    //         ),
-    //         _asserter,
-    //         address(this),
-    //         address(0), // No sovereign security.
-    //         assertionLiveness,
-    //         defaultCurrency,
-    //         bond,
-    //         defaultIdentifier,
-    //         bytes32(0) // No domain.
-    //     );
-    //     assertionsData[assertionId] = DepositAssertion(_depositId, _depositor, _amount, _asserter, false);
-    //     emit DepositAsserted(_depositor, _amount, assertionId);
+        assertionId = oo.assertTruth(
+            abi.encodePacked(
+                "0x",
+                ClaimData.toUtf8BytesAddress(_asserter),
+                " asserting filled withdrawal 0x",
+                ClaimData.toUtf8Bytes(_fillHash),
+                " by relayer: 0x",
+                ClaimData.toUtf8BytesAddress(_relayer),
+                " with amount: ",
+                ClaimData.toUtf8BytesUint(_amount),
+                " at timestamp: ",
+                ClaimData.toUtf8BytesUint(block.timestamp),
+                " using token 0x",
+                ClaimData.toUtf8BytesAddress(_token),
+                " in the DataAsserter contract at 0x",
+                ClaimData.toUtf8BytesAddress(address(this)),
+                " is valid."
+            ),
+            _asserter,
+            address(this),
+            address(0), // No sovereign security.
+            assertionLiveness,
+            defaultCurrency,
+            bond,
+            defaultIdentifier,
+            bytes32(0) // No domain.
+        );
 
-    //     // Fill the deposit `_amount` wDai by using Dai to mint sDAI and forwarding it to the user.
-    //     // Assert the filled deposit request on Scroll's OOv3, which mints wsDai to the user.
-    // }
+        filledWithdrawalAssertionsData[assertionId] =
+            FilledWithdrawalAssertion(_fillHash, _relayer, _amount, _token, _asserter, false);
+
+        emit FilledWithdrawalAsserted(_relayer, _amount, assertionId);
+    }
 
     // OptimisticOracleV3 resolve callback.
     function assertionResolvedCallback(bytes32 assertionId, bool assertedTruthfully) public {
         require(msg.sender == address(oo));
         // If the assertion was true, then the data assertion is resolved.
         if (assertedTruthfully) {
-            withdrawalAssertionsData[assertionId].resolved = true;
-            WithdrawalAssertion memory dataAssertion = withdrawalAssertionsData[assertionId];
-            emit WithdrawalAssertionResolved(dataAssertion.withdrawalId, dataAssertion.asserter, assertionId);
-            // Deposit `amount` Dai from Pool in sDAI Vault with the receiver as the depositor on scroll.
-            // daiPool.depositDaiToVault(dataAssertion.amount, dataAssertion.depositor);
-            // Else delete the data assertion if it was false to save gas.
-            (bool success,) = savingsDai.call(
-                abi.encodeWithSignature(
-                    "redeem(uint256,address,address)",
-                    dataAssertion.amount,
-                    address(fillerPool),
-                    address(fillerPool) // `receiver` and `owner` are both the FillerPool contract.
-                )
-            );
-
-            require(success, "Failed to withdraw Dai from sDai Vault to FillerPool.");
-            // Emit event with how much Dai was received after withdrawing from the sDai Vault.
-            // Lock that Dai in the filler pool.
-            // Ask relayer to fill wDai to the user.
-            // Let relayer withdraw the locked Dai from the filler pool.
+            if (_isWithdrawalAssertion(assertionId)) {
+                _resolveWithdrawalAssertion(assertionId);
+            } else if (_isFillAssertion(assertionId)) {
+                _resolveFillAssertion(assertionId);
+            }
         } else {
-            delete withdrawalAssertionsData[assertionId];
+            if (_isWithdrawalAssertion(assertionId)) {
+                delete withdrawalAssertionsData[assertionId];
+            } else if (_isFillAssertion(assertionId)) {
+                delete filledWithdrawalAssertionsData[assertionId];
+            }
         }
+    }
+
+    function _isWithdrawalAssertion(bytes32 assertionId) internal view returns (bool) {
+        if (withdrawalAssertionsData[assertionId].asserter != address(0)) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    function _resolveWithdrawalAssertion(bytes32 assertionId) internal {
+        WithdrawalAssertion memory dataAssertion = withdrawalAssertionsData[assertionId];
+
+        // Deposit `amount` Dai from Pool in sDAI Vault with the receiver as the depositor on scroll.
+        // daiPool.depositDaiToVault(dataAssertion.amount, dataAssertion.depositor);
+        // Else delete the data assertion if it was false to save gas.
+        (bool success,) = savingsDai.call(
+            abi.encodeWithSignature(
+                "redeem(uint256,address,address)",
+                dataAssertion.amount,
+                address(fillerPool),
+                address(fillerPool) // `receiver` and `owner` are both the FillerPool contract.
+            )
+        );
+
+        require(success, "Failed to withdraw Dai from sDai Vault to FillerPool.");
+        withdrawalAssertionsData[assertionId].resolved = true;
+        emit WithdrawalAssertionResolved(dataAssertion.withdrawalId, dataAssertion.asserter, assertionId);
+        // Emit event with how much Dai was received after withdrawing from the sDai Vault.
+        // Lock that Dai in the filler pool.
+        // Ask relayer to fill wDai to the user.
+        // Let relayer withdraw the locked Dai from the filler pool.
+    }
+
+    function _isFillAssertion(bytes32 assertionId) internal view returns (bool) {
+        if (filledWithdrawalAssertionsData[assertionId].asserter != address(0)) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    function _resolveFillAssertion(bytes32 assertionId) internal {
+        FilledWithdrawalAssertion memory dataAssertion = filledWithdrawalAssertionsData[assertionId];
+
+        // Reimburse the relayer in the token used to the fill the withdrawal with `amount`.
+        reimbursements[dataAssertion.relayer][dataAssertion.token] += dataAssertion.amount;
+        filledWithdrawalAssertionsData[assertionId].resolved = true;
+        emit FilledWithdrawalAssertionResolved(dataAssertion.fillHash, dataAssertion.asserter, assertionId);
+    }
+
+    function getReimbursementAmount(address _relayer, address _l1token) public view returns (uint256) {
+        return reimbursements[_relayer][_l1token];
     }
 
     // If assertion is disputed, do nothing and wait for resolution.

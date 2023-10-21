@@ -95,7 +95,7 @@ contract DataAsserter {
         if (assertedTruthfully) {
             fillAssertionsData[assertionId].resolved = true;
             DepositFillAssertion memory fillDataAssertion = fillAssertionsData[assertionId];
-            emit DepositFillAssertionResolved(fillDataAssertion.fillHash, fillDataAssertion.filler, assertionId);
+
             // Mint `amount` of wrapped sDAI to the depositor on scroll.
             (bool success,) = scrollSavingsDai.call(
                 abi.encodeWithSignature(
@@ -104,6 +104,7 @@ contract DataAsserter {
             );
             require(success, "Failed to mint Wrapped sDai shares to depositor on Scroll.");
             reimbursements[fillDataAssertion.filler][fillDataAssertion.fillToken] += fillDataAssertion.amount;
+            emit DepositFillAssertionResolved(fillDataAssertion.fillHash, fillDataAssertion.filler, assertionId);
         } else {
             delete fillAssertionsData[assertionId];
             // TODO: Refund deposited wDai back to user if assertion was false.

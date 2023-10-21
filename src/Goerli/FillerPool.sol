@@ -13,6 +13,7 @@ interface ISavingsDai {
 
 contract FillerPool is Ownable {
     ISavingsDai public immutable savingsDai;
+    address public dataAsserter;
     IERC20 public immutable dai = IERC20(address(0x6B175474E89094C44Da98b954EedeAC495271d0F)); // DAI on Mainnet
 
     constructor(address _savingsDai) {
@@ -98,5 +99,21 @@ contract FillerPool is Ownable {
 
     function approve(address _token, address _spender, uint256 _amount) external onlyOwner {
         TransferHelper.safeApprove(_token, _spender, _amount);
+    }
+
+    function withdrawRelayerReimbursement(address _relayer, address _l1Token, address _to) external {
+        // Check reimbursement amount
+        (bool success, bytes memory data) =
+            dataAsserter.call(abi.encodeWithSignature("getReimbursementAmount(address,address)", _relayer, _l1Token));
+        require(success, "Failed to get reimbursement amount");
+        uint256 reimbursementAmount = abi.decode(data, (uint256));
+        require(reimbursementAmount > 0, "No reimbursement amount");
+        // Transfer reimbursement amount to _to
+        _to = _to == address(0) ? _relayer : _to;
+        TransferHelper.safeTransfer(_l1Token, _to, reimbursementAmount);
+    }
+
+    function setDataAsserter(address _dataAsserter) external onlyOwner {
+        dataAsserter = _dataAsserter;
     }
 }

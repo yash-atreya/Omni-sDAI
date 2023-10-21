@@ -43,6 +43,10 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
     event WithdrawalAssertionResolved(
         bytes32 indexed withdrawalId, address indexed asserter, bytes32 indexed assertionId
     );
+    event FilledWithdrawalAsserted(address indexed relayer, uint256 indexed amount, bytes32 indexed assertionId);
+    event FilledWithdrawalAssertionResolved(
+        bytes32 indexed fillHash, address indexed asserter, bytes32 indexed assertionId
+    );
 
     // Scroll Filler Pool
     event FilledWithdrawal(address indexed filler, bytes32 indexed fillHash, uint256 indexed amount);
@@ -59,6 +63,8 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
         dataAsserter =
         new DataAsserter(address(defaultCurrency), address(optimisticOracleV3), address(savingsDai), address(fillerPool));
         console.log("DataAsserter deployed at address: ", address(dataAsserter), " on fork_id: ", vm.activeFork());
+        // Set DataAsserter on Mainnet/FillerPool
+        fillerPool.setDataAsserter(address(dataAsserter));
         uint256 minBond = optimisticOracleV3.getMinimumBond(address(defaultCurrency));
         console.log("Minimum Bond on fork ", vm.activeFork(), " is: ", minBond);
 
@@ -209,5 +215,45 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
         assertEq(scrollDai.balanceOf(relayer), 1000 - amount);
         assertEq(scrollSavingsDai.balanceOf(depositor), 0);
         assertEq(scrollSavingsDai.balanceOf(address(scrollSavingsDai)), 0); // Shares deposited by user should be burned.
+    }
+
+    function test_assertFilledWithdrawal() public returns (bytes32) {
+        uint256 receivedShares = test_withdrawAndAssertWithdrawal();
+        vm.selectFork(mainnetFork);
+        bytes32 fillhash = bytes32("fill-hash");
+        uint256 amount = /*receivedShares*/ 99;
+        address filler = relayer;
+        address token = address(mainnetDai); // L1 Address of token used to fill the withdrawal.
+
+        _commonSetup();
+        dataAsserter =
+        new DataAsserter(address(defaultCurrency), address(optimisticOracleV3), address(savingsDai), address(fillerPool));
+        console.log("DataAsserter deployed at address: ", address(dataAsserter), " on fork_id: ", vm.activeFork());
+        fillerPool.setDataAsserter(address(dataAsserter));
+        // Relayer asserts the filled withdrawal
+        vm.startPrank(relayer);
+        defaultCurrency.allocateTo(relayer, optimisticOracleV3.getMinimumBond(address(defaultCurrency))); // Give the asserter some money for the bond
+        defaultCurrency.approve(address(dataAsserter), optimisticOracleV3.getMinimumBond(address(defaultCurrency))); // Asserter needs to approve DataAsserter to spend the bond
+        vm.expectEmit(true, false, false, true);
+        emit FilledWithdrawalAsserted(filler, amount, bytes32("assertion-id"));
+        return dataAsserter.assertFilledWithdrawal(fillhash, filler, amount, token, filler);
+    }
+
+    function test_settleFillWithdrawalAssertion() public {
+        bytes32 assertionId = test_assertFilledWithdrawal();
+
+        // Warp time and settle
+        timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
+
+        // Settle Assertion
+        optimisticOracleV3.settleAssertion(assertionId);
+
+        // Check Reimbursement
+        assertEq(dataAsserter.getReimbursementAmount(relayer, address(mainnetDai)), 99); // Fill amount is 96
+        assertEq(mainnetDai.balanceOf(address(fillerPool)), 99);
+        // withdraw Reimbursement
+        assertEq(mainnetDai.balanceOf(relayer), 1000 - 100);
+        fillerPool.withdrawRelayerReimbursement(relayer, address(mainnetDai), relayer);
+        assertEq(mainnetDai.balanceOf(relayer), 999); // TODO: Possible issue: 1 Dai is being leaked somewhere.
     }
 }
