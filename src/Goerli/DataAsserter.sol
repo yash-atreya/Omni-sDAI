@@ -159,7 +159,7 @@ contract DataAsserter {
             // Else delete the data assertion if it was false to save gas.
             (bool success,) = savingsDai.call(
                 abi.encodeWithSignature(
-                    "withdraw(uint256,address,address)",
+                    "redeem(uint256,address,address)",
                     dataAssertion.amount,
                     address(fillerPool),
                     address(fillerPool) // `receiver` and `owner` are both the FillerPool contract.

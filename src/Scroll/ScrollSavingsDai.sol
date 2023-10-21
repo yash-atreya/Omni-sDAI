@@ -40,8 +40,9 @@ contract ScrollSavingsDai is ERC20, Ownable {
     function withdraw(uint256 _amount) external {
         // require(deposits[msg.sender] >= _amount, "Insufficient balance");
         // Transfer wsDai shares to this contract
-        IERC20(address(this)).safeTransferFrom(msg.sender, address(this), _amount);
+        // IERC20(address(this)).safeTransferFrom(msg.sender, address(this), _amount);
         // deposits[msg.sender] -= _amount;
+        _burn(msg.sender, _amount); // Burn wsDai shares
         emit WithdrawalRequest(msg.sender, _amount);
     }
 

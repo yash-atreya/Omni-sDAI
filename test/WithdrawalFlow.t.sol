@@ -7,6 +7,7 @@ import "../src/Goerli/DataAsserter.sol";
 import "../src/Scroll/ScrollSavingsDai.sol";
 import "../src/SavingsDai.sol"; // Mainnet contract
 import "../src/Goerli/FillerPool.sol";
+import {FillerPool as ScrollFillerPool} from "../src/Scroll/FillerPool.sol";
 import {DataAsserter as DataAsserterScroll} from "../src/Scroll/DataAsserter.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -23,7 +24,7 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
     ERC20 scrollDai; // Scroll doesn't have bridged DAI on Sepolia. Scroll Mainnet has it. https://github.com/scroll-tech/token-list
     ScrollSavingsDai public scrollSavingsDai; // Scroll SavingsDai - Representation of SavingsDai from
     DataAsserterScroll public dataAsserterScroll; // DataAsserter on Scroll
-
+    ScrollFillerPool scrollFillerPool; // FillerPool on Scroll
     // Forks
     uint256 mainnetFork;
     uint256 scrollFork;
@@ -42,6 +43,9 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
     event WithdrawalAssertionResolved(
         bytes32 indexed withdrawalId, address indexed asserter, bytes32 indexed assertionId
     );
+
+    // Scroll Filler Pool
+    event FilledWithdrawal(address indexed filler, bytes32 indexed fillHash, uint256 indexed amount);
 
     function setUp() public {
         mainnetFork = vm.createFork(vm.envString("MAINNET_RPC"));
@@ -62,11 +66,14 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
         vm.selectFork(scrollFork);
         scrollDai = new ERC20("ScrollDAI", "sclDAI"); // For Scroll Sepolia. Use bridged DAI on Scroll Mainnet. https://github.com/scroll-tech/token-list.abi
 
-        // Deploy OOv3 and DataAsserter on Scroll
+        // Deploy ScrollSavingsDai on Scroll
         scrollSavingsDai = new ScrollSavingsDai(address(scrollDai));
         console.log(
             "ScrollSavingsDai deployed at address: ", address(scrollSavingsDai), " on fork_id: ", vm.activeFork()
         );
+        // Deploy FillerPool on Scroll
+        scrollFillerPool = new ScrollFillerPool(address(scrollDai), address(scrollSavingsDai));
+        // Deploy OOv3 and DataAsserter on Scroll
         _commonSetup();
         dataAsserterScroll =
             new DataAsserterScroll(address(defaultCurrency), address(optimisticOracleV3), address(scrollSavingsDai));
@@ -78,6 +85,7 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
 
         // Deal
         deal(address(scrollDai), depositor, 1000); // Gives 100 Dai to depositor on Scroll
+        deal(address(scrollDai), relayer, 1000); // Gives 100 Dai to relayer on Mainnet
         vm.selectFork(mainnetFork);
         deal(address(mainnetDai), relayer, 1000);
     }
@@ -131,12 +139,12 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
         emit WithdrawalRequest(depositor, shares);
         scrollSavingsDai.withdraw(shares);
         assertEq(scrollSavingsDai.balanceOf(depositor), 0);
-        assertEq(scrollSavingsDai.balanceOf(address(scrollSavingsDai)), shares);
+        assertEq(scrollSavingsDai.totalSupply(), 0);
         vm.stopPrank();
         return shares;
     }
 
-    function test_withdrawAndAssertWithdrawal() public {
+    function test_withdrawAndAssertWithdrawal() public returns (uint256) {
         uint256 shares = test_withdrawOnScroll();
 
         // Redeploy oov3 and DataAsserter on Mainnet/Goerli - As we're using the same variable names for oov3 contracts.
@@ -161,17 +169,45 @@ contract WithdrawalFlowTest is CommonOptimisticOracleV3Test {
         emit WithdrawalAsserted(withdrawer, amount, bytes32("assertion-id"));
         bytes32 assertionId = dataAsserter.assertWithdrawal(withdrawalHash, withdrawer, amount, relayer);
         vm.stopPrank();
-        // // Warp time and settle
+        // Warp time and settle
         fillerPool.approve(address(savingsDai), address(dataAsserter), type(uint256).max);
         timer.setCurrentTime(timer.getCurrentTime() + 30 seconds);
         vm.expectEmit(true, false, false, true);
         emit WithdrawalAssertionResolved(withdrawalHash, relayer, assertionId);
         console.log("sDai Balance of Filler Pool before settlement: ", savingsDai.balanceOf(address(fillerPool)));
         optimisticOracleV3.settleAssertion(assertionId);
-
+        console.log("sDai Balance of Filler Pool after settlement: ", savingsDai.balanceOf(address(fillerPool)));
         // Check Balances of Filler Pool
         assertTrue(savingsDai.balanceOf(address(fillerPool)) < shares);
         console.log("Received ", mainnetDai.balanceOf(address(fillerPool)), " Dai after withdrawal");
         assertTrue(mainnetDai.balanceOf(address(fillerPool)) > 0);
+        return shares;
+    }
+
+    function test_fillWithdrawal() public {
+        uint256 receivedShares = test_withdrawAndAssertWithdrawal();
+
+        // Relayer fills the withdrawal
+        vm.selectFork(scrollFork);
+        vm.startPrank(relayer); // As relayer becomes the filler (msg.sender)
+        scrollDai.approve(address(fillerPool), 100);
+        bytes32 withdrawalHash = bytes32("txn-hash-of-withdrawal-on-scroll");
+        uint256 amount = receivedShares;
+        address fillFor = depositor;
+        address token = address(scrollDai);
+        uint256 fee = 0;
+
+        // Relayer must allow FillerPool to spend the amount
+        scrollDai.approve(address(scrollFillerPool), amount);
+        vm.expectEmit(false, false, true, true);
+        emit FilledWithdrawal(relayer, bytes32("fill-hash"), amount);
+        scrollFillerPool.fillWithdrawal(withdrawalHash, amount, fillFor, token, fee);
+        vm.stopPrank();
+
+        // Check if user received the amount
+        assertEq(scrollDai.balanceOf(depositor), (900 + amount));
+        assertEq(scrollDai.balanceOf(relayer), 1000 - amount);
+        assertEq(scrollSavingsDai.balanceOf(depositor), 0);
+        assertEq(scrollSavingsDai.balanceOf(address(scrollSavingsDai)), 0); // Shares deposited by user should be burned.
     }
 }
