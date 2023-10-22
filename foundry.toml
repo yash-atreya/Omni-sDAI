@@ -4,3 +4,5 @@ out = "out"
 libs = ["lib"]
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config
+[etherscan]
+# scroll = { key = "TU4ENDCTWI9BEJIQ1NNKCENU9E7ASTEIW2", chain = "scroll" }
