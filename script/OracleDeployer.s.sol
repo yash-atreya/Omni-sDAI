@@ -66,6 +66,15 @@ contract OracleSandboxScript is Script {
         console.log("Deployed Optimistic Oracle V3 at %s", address(oo));
         finder.changeImplementationAddress(OracleInterfaces.OptimisticOracleV3, address(oo));
 
+        // Mint TestnetERC20 tokens to the depositor and relayer.
+        TestnetERC20(defaultCurrency).allocateTo(vm.envAddress("TEST_DEPOSITOR"), 100 * 1000000e18);
+        TestnetERC20(defaultCurrency).allocateTo(vm.envAddress("TEST_RELAYER"), 100 * 1000000e18);
+        console.log(
+            "Allocated 100M TestnetERC20 tokens to depositor %s and relayer %s",
+            vm.envAddress("TEST_DEPOSITOR"),
+            vm.envAddress("TEST_RELAYER")
+        );
+
         vm.stopBroadcast();
     }
 }

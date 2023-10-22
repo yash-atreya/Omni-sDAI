@@ -11,7 +11,10 @@ contract FillerPoolScript is Script {
         // Deploy FillerPool
         FillerPool fillerPool =
             new FillerPool(vm.envOr("G_SAVINGS_DAI", address(0x83F20F44975D03b1b09e64809B757c47f942BEeA)));
-        console.log("Deployed FillerPool at %s", address(fillerPool));
+        console.log("Deployed Goerli FillerPool at %s", address(fillerPool));
+
+        // Set DataAsserter in FillerPool
+        fillerPool.setDataAsserter(vm.envOr("G_DATA_ASSERTER", address(0x0)));
 
         vm.stopBroadcast();
     }
