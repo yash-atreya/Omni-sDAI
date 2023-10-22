@@ -5,3 +5,5 @@ forge-std/=lib/forge-std/src/
 @uma/=lib/protocol/packages
 v3-core/=lib/v3-core/
 v3-periphery/=lib/v3-periphery/contracts/
+@uniswap/v3-core/=lib/v3-core/
+@uniswap/v3-periphery/=lib/v3-periphery/
